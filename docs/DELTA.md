@@ -145,11 +145,62 @@ and does not define `BUILD_FINGERPRINT`.
 ## What this means for B
 
 The template is A. Of A's 175 effective macros, 146 are structurally identical
-and stay as they are. Of the 29 that differ from DZF2, the three that can be
+and stay as they are. Of the 29 that differ from DZF2, the three that could be
 closed without firmware are identity, `P0_PHYS_OFFSET`, and the event ID; the
-worker caller is constrained by the tracefs capture. Everything else in the
-symbol and layout classes must be re-derived from the `S928BXXU6EZIF` Image.
-`docs/PORT-STATUS.md` tracks that split row by row.
+worker caller was constrained by the tracefs capture. Everything else in the
+symbol and layout classes had to be re-derived from the target Image.
+
+## Closure against B EZIF
+
+The tables above compare A with **B-ref (DZF2)**; they are not predictions for
+**B EZIF**. The exact B EZIF Image was subsequently downloaded and every symbol
+row was re-derived from it:
+
+| Property | Value |
+| --- | --- |
+| Image | `out/kernel`, 38,140,416 bytes |
+| SHA-256 | `a8c1638497ca1bff576c5a6d9426521ec545fd68da8ce5dfa47c40233391a179` |
+| Symbols | kallsyms, base-relative, 107568 entries, relative base `0xffffffc008000000` |
+| Types | BTF blob at image offset 0x1820e90 |
+| Frames | `llvm-objdump` over a flat ELF wrapper |
+
+Result: **22 of 23 inherited symbol values matched the B EZIF Image exactly**,
+including all eight `ashmem_*` entries, both configfs iterators, both workqueue
+anchors, `selinux_state`, `kmalloc_caches`, `anon_pipe_buf_ops`, the random-table
+boot-id pointer and the sysctl anchor. The build id did turn out to describe the
+same text layout. The worker caller, verified live earlier, also matches its own
+disassembly (`worker_thread+0xa0`).
+
+One row did not match:
+
+| Macro | Inherited (A) | B EZIF | Cause |
+| --- | --- | --- | --- |
+| `SLIDE_NFULNL_LOGGER_OFF` | 0x016ba44f | **0x016ba45d** | `nfulnl_logger.name` is `base+0x016ba45d`; 0x016ba44f is 14 bytes early, inside the preceding `"packet message\n"` string |
+
+The 14-byte error is not cosmetic. `slide_read_stext` computes
+`stext = leaked - off`; with the inherited value it would return `real_stext+14`,
+which fails `slide_commit_stext`'s `(slide & 0x7fff) == 0` test on every attempt.
+This is the strongest argument against inheriting a symbol table on a shared KMI
+build id: 23 values were identical, and the one that was not would have failed
+silently at the alignment check rather than at a symbol.
+
+The other classes closed the same way:
+
+- **struct layout** — BTF confirms `rt_mutex_waiter` (0x58 bytes, exact field
+  offsets), the eight `task_struct` fields used by the fake task,
+  `file_operations`, `configfs_buffer`, the workqueue structs, `pipe_buffer`,
+  `struct page` (0x40) and the `struct slab` overlay. `mm_struct` is 0x3c0 in
+  BTF; the 0x400 macro is the slab stride, not `sizeof`.
+- **slide** — `SLIDE_PSELECT_WORD_SHIFT = 3` follows from the Image's own frames:
+  the requeue waiter is at `pt_regs-0x1e8`, the `core_sys_select` fd-set buffer
+  at `pt_regs-0x200`.
+- **fingerprint** — generated at probe 0x1f0000, regeneration byte-identical,
+  generator re-reads 32 rows and 256 source qwords.
+- **physical** — `P0_KERNEL_PHYS_LOAD` remains the only inherited value with no
+  proof, because the live shell cannot read `/proc/iomem` or `/proc/cmdline` and
+  the BL payload exposes no literal.
+
+`docs/PORT-STATUS.md` carries the per-row table and the reproduction commands.
 
 ## Reproduce
 

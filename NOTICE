@@ -17,15 +17,17 @@ Files taken from that project, in whole or with target-specific edits:
   Makefile (target default and size check adapted for this port)
   LICENSE
 
-The porting method, the SM-S928B target directory, and the records under docs/
-and evidence/ are additions made for this port. Their structure follows the
-SM-S928N profile record published at:
+The porting method, the porting tools (port_diff, extract_image, inspect_image),
+the SM-S928B target directory, and the records under docs/ and evidence/ are
+additions made for this port. Their structure follows the SM-S928N profile
+record published at:
 
   https://github.com/zimza1abim/Root-My-Galaxy-Payloads-SM-S928N
 
 No firmware, boot image, kernel image, or other Samsung binary is included.
 
 Values in src/targets/e3q-S928BXXU6EZIF/ that were inherited from the SM-S928N
-profile are labelled as such in the source and in docs/PORT-STATUS.md. They are
-not verified against the S928BXXU6EZIF kernel. The build gate exists to prevent
-their use.
+profile are labelled as such in the source and in docs/PORT-STATUS.md. The
+S928BXXU6EZIF Image was used to verify those values, and the single inherited
+symbol that did not match was corrected; `P0_KERNEL_PHYS_LOAD` is still inherited
+and the build gate exists to prevent its use without a measurement.

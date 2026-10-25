@@ -8,12 +8,12 @@ method and tooling used to derive it from the validated `SM-S928N`
 > [!CAUTION]
 > **Status: not built, not run, not rooted.**
 >
-> This target profile is a fail-closed scaffold. Symbol offsets are inherited
-> from the SM-S928N build and are **not verified** against this kernel, and the
-> P0 fingerprint table has not been generated. `target.h` contains an `#error`
-> that refuses to compile until that changes. Do not remove it to "see what
-> happens": a kernel exploit with the wrong offsets writes to a real address that
-> is not the symbol, and the usual result is a panic.
+> The profile's symbol offsets, struct offsets and P0 fingerprint are derived
+> from the exact `S928BXXU6EZIF` kernel Image. One value — the physical load
+> address — is still inherited rather than measured, so `target.h` contains an
+> `#error` that refuses to compile. Do not remove it to "see what happens": a
+> kernel exploit with the wrong physical anchor writes to a real address that is
+> not the symbol, and the usual result is a panic.
 >
 > When it is finished, it will still be a kernel exploit. A failed attempt can
 > panic and reboot the phone. Nothing here is signed, supported, or guaranteed.
@@ -34,8 +34,10 @@ method and tooling used to derive it from the validated `SM-S928N`
 
 The reference profile is `SM-S928N` / `S928NKSU6EZIF`: same SoC family, same
 KMI, same build id `34343818`, same Android 17 release. Only the model segment
-and the kernel localversion suffix differ. That is what makes a symbol-level port
-worth attempting — and it is not proof that the text layout is identical.
+and the kernel localversion suffix differ. That made a symbol-level port worth
+attempting, and against the B Image 22 of 23 inherited symbol values did match;
+the 23rd (`nfulnl_logger`'s name string) was 14 bytes off, which is more than
+enough to break the slide leak.
 
 ## Where the port stands
 
@@ -44,9 +46,11 @@ worth attempting — and it is not proof that the text layout is identical.
 | Device identity, build, kernel release | measured on the handset |
 | `P0_PHYS_OFFSET = 0x816e0000` | measured without root (`/proc/zoneinfo`) |
 | `SLIDE_TRACEFS_EVENT_ID = 106` | measured without root (tracefs) |
-| `SLIDE_TRACEFS_WORKER_CALLER_OFF = 0xdb39c` | consistent with a live raw-tracefs capture; still to be confirmed by disassembly |
-| 21 symbol offsets (`ashmem_*`, `configfs_*`, `init_task`, …) | inherited from SM-S928N, unverified |
-| `p0_fingerprint.h` | not generated |
+| `SLIDE_TRACEFS_WORKER_CALLER_OFF = 0xdb39c` | verified by disassembly and the live raw-tracefs capture |
+| 23 inherited symbol offsets | re-derived from the B Image: 22 identical, one corrected by 14 bytes |
+| `SLIDE_PSELECT_WORD_SHIFT = 3` | derived from the Image's futex/pselect frames |
+| struct layout (`task_struct`, waiter, fops, page, workqueue, …) | confirmed against the Image's BTF |
+| `p0_fingerprint.h` | generated from the Image at probe `0x1f0000`; regeneration byte-identical |
 | `P0_KERNEL_PHYS_LOAD` | candidate `0xa8000000`, not measured |
 | Payload build | blocked: no NDK on the build host, and the gate is closed |
 | KernelSU daemon | not started |
@@ -81,12 +85,13 @@ src/                         shared exploit sources (unmodified upstream)
 src/targets/e3q-S928BXXU6EZIF/
   target.h                   identity, symbols, policy flags, build gate
   ezif_layout.h              physical anchors, struct layout, payload placement
-  p0_fingerprint.h           generated table — currently a hard #error
+  p0_fingerprint.h           generated table from the B Image
 tools/port_diff.py           flatten and diff two target profiles
 tools/parse_raw.py           decode sched_blocked_reason out of raw tracefs pages
 tools/verify-tracefs.sh      capture and check the worker caller on a live phone
 tools/fusfetch/              fetch + decrypt a byte range from Samsung FUS
 tools/extract_image.py       pull boot.img.lz4 and the kernel Image out of a prefix
+tools/inspect_image.py       read kallsyms and BTF out of the stripped Image
 tools/generate_p0_fingerprint.pl   build the P0 table from the raw Image
 docs/                        method, delta record, status ledger
 evidence/                    what was measured, with commands and outputs
@@ -94,15 +99,22 @@ evidence/                    what was measured, with commands and outputs
 
 ## Finishing the port
 
-The remaining work is deliberately mechanical and all of it needs the exact
-firmware image. The commands are in
-[`docs/PORT-STATUS.md`](docs/PORT-STATUS.md#pending-needs-the-s928bxxu6ezif-image);
-the short version is: fetch the head of the FUS package, extract
-`boot.img.lz4`, decompress and slice the Image, recover symbols with
-`vmlinux-to-elf`, dump BTF, generate the P0 table, close
-`P0_KERNEL_PHYS_LOAD` from the BL load path, then build and validate on the
-handset. Each of those steps lands as its own commit with the Image size and
-SHA-256 that produced it.
+The image-derived work is complete: the FUS prefix was fetched, `boot.img.lz4`
+and the Image were extracted, symbols and BTF were read from the Image, the frame
+arithmetic was disassembled, and the P0 table was generated and re-read. The
+per-value evidence and commands are in
+[`docs/PORT-STATUS.md`](docs/PORT-STATUS.md).
+
+What remains:
+
+1. measure `P0_KERNEL_PHYS_LOAD` from a reading that belongs to this boot chain
+   (root-side `/proc/iomem` or the BL load path), and check it against the vendor
+   reserved-memory regions;
+2. build the payload with an NDK, which the current host does not have;
+3. validate on the handset incrementally: reclaim, physical oracle, waiter
+   rewrite, FOPS readback, `selinux_enforcing`;
+4. rebuild KernelSU for this vermagic and publish a hashed artifact before
+   adding a `support/targets-v3.json` entry.
 
 Runtime identity is **not** enforced by the shared payload: it does not read the
 `TARGET_GUARD_*` macros or call `getprop`. Those macros are the recorded contract

@@ -111,23 +111,29 @@ each member.
 
 A symbol offset is `symbol_address - KIMAGE_TEXT_BASE` from B's own Image. The
 only legitimate shortcut is when B's Image is not available yet: then the A
-value is an explicitly labelled *inherited candidate*, which is what the
-`target.h` here contains and why it is fenced by `#error`.
+value is an explicitly labelled *inherited candidate*, fenced by `#error`.
 
-The pipeline, from the upstream porting guide in `docs/` of the reference
-project, is:
+The pipeline used here:
 
 ```text
-AP tar -> boot.img.lz4 -> lz4 -d -> boot header v4
+AP/BL tar (deflate or store) -> boot.img.lz4 -> lz4 -d -> boot header v3
        -> kernel_size at 0x08, Image at 0x1000
-       -> vmlinux-to-elf -> llvm-nm -> offsets
+       -> kallsyms + BTF read directly out of the Image -> offsets
 ```
 
-`tools/fusfetch` fetches only the head of the FUS package, because a full AP
-plus its decrypted copy is roughly twice the archive size; `tools/extract_image.py`
-walks the ZIP and tar inside that prefix and slices the Image out of the boot
-header. Neither tool is used yet for this target: no `S928BXXU6EZIF` Image has
-been downloaded in this work.
+The last step normally means `vmlinux-to-elf` plus `llvm-nm` and `bpftool`, but
+none of that is required: the Image is a PE/COFF EFI stub with no ELF symbol
+table, and both tables the profile needs are inside it. `tools/inspect_image.py`
+decodes the base-relative kallsyms arrays and the BTF blob, and
+`llvm-objdump` on a flat ELF wrapper covers the frame arithmetic. That keeps the
+derivation reproducible with nothing installed beyond Python and LLVM.
+
+`tools/fusfetch` fetches only the head of the FUS package, because a full AP plus
+its decrypted copy is roughly twice the archive size;
+`tools/extract_image.py` walks the ZIP and tar inside that prefix, inflating the
+AP stream when the entry is deflate-compressed and walking the stored BL tar in
+place, then slices the Image out of the boot header. All three tools were used
+for this target; the Image identity and SHA-256 are in `docs/PORT-STATUS.md`.
 
 ## 5. Overlay, do not fork
 
@@ -173,21 +179,24 @@ Only values that can be read without root are closed this way:
 | --- | --- | --- |
 | `P0_PHYS_OFFSET` | `/proc/zoneinfo` `start_pfn` | 0x816e0000 |
 | `SLIDE_TRACEFS_EVENT_ID` | `events/sched/sched_blocked_reason/id` | 106 |
-| worker caller | `per_cpu/*/trace_pipe_raw` | consistent with 0xdb39c |
+| worker caller | `per_cpu/*/trace_pipe_raw` plus `llvm-objdump` | 0xdb39c in both |
 | VA/PA geometry | `/proc/config.gz` | 39 / 48 |
 | DMA32 presence | `/proc/zoneinfo` | zone exists, 0 pages |
 
 Each one is a *constraint* on the Image-derived result, not a replacement for
 it. The tracefs check is a good example of the difference: the raw caller
 address only constrains the low 16 bits, because the slide is unknown, so it
-confirms the bucket and nothing more.
+confirms the bucket and nothing more. Disassembly of `worker_thread` then pins
+the exact return address of the blocking `bl schedule`.
 
 ## 8. Keep a provenance ledger per value
 
-Every number in the profile should answer "where did this come from". The three
-labels this port uses:
+Every number in the profile should answer "where did this come from". The labels
+this port uses:
 
 - **measured** — read from this device or this Image, with the command recorded;
+- **verified** — derived from the target's own Image (symbol, BTF, frame or
+  fingerprint) and re-checked, as opposed to merely inherited;
 - **inherited** — taken from the reference profile, deliberately, with the reason
   stated and the risk named;
 - **pending** — not established; blocks the build.
