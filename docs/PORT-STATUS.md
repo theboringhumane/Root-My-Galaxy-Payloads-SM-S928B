@@ -64,7 +64,7 @@ table ships separately, so the tables were read out of the Image itself with
 | `SLIDE_PSELECT_WORD_SHIFT = 3` | verified | frame arithmetic below |
 | `rt_mutex_waiter`, `task_struct`, `file_operations`, page/slab, configfs, workqueue, pipe offsets | verified | BTF (`tools/inspect_image.py btf`) |
 | `p0_fingerprint.h` | verified | generated from this Image at probe 0x1f0000; regeneration is byte-identical and the generator re-reads all 32 rows / 256 qwords |
-| `P0_KERNEL_PHYS_LOAD = 0xa8000000` | **candidate, pending** | inherited from the DZF2 profile; see below |
+| `P0_KERNEL_PHYS_LOAD = 0xa8000000` | **candidate, pending** | inherited from the DZF2 profile; free space and outside every vendor carve-out (`evidence/dtbo-reserved.md`), but the load path is unmeasured |
 
 `P0_PHYS_OFFSET` is `memstart_addr`, not a DRAM base. The value matches the
 reference profile exactly, which is expected on the same platform binary, and it
@@ -166,11 +166,20 @@ shell, the ABL payload is a UEFI volume with no matching literal, and the PE
 `ImageBase` is 0, so the value stays inherited until a root-side or bootloader
 reading closes it.
 
+What the shipped DT does say is recorded in `evidence/dtbo-reserved.md`. The
+base DT in `vendor_boot.img` lists 88 reserved-memory carve-outs across 22 board
+variants; the DTBO adds `sec_xbl_ramdump@A7D00000` (0xa7d00000 + 0x300000,
+ending exactly at 0xa8000000). No carve-out in any variant overlaps
+`[0xa8000000, 0xaa710000)`, so the candidate is free space, sits at the top of
+the XBL ramdump carve-out, and passes the reserved-collision check. That is a
+constraint, not a measurement: it says the address is *usable*, not that the
+boot chain loads there.
+
 Rows still open after that:
 
 | Value | How it is closed |
 | --- | --- |
-| `P0_KERNEL_PHYS_LOAD` | read the load address from a root-side `/proc/iomem` or the BL load path; must be page aligned and outside the vendor reserved-memory regions |
+| `P0_KERNEL_PHYS_LOAD` | read the load address from a root-side `/proc/iomem` or the BL load path; the candidate is already aligned and outside every vendor carve-out |
 | lane/bank geometry (`SLIDE_BANK_SLOTS`, `SLIDE_S928_BANK_*`) | on-device: re-check against the reclaimed page layout |
 | live reclaim and FOPS readback | on-device, after a build exists |
 
@@ -205,7 +214,8 @@ The target builds only when all of these are true:
    (regeneration is byte-identical);
 3. symbol offsets are inside the Image and 4-byte aligned — **passes**;
 4. `P0_KERNEL_PHYS_LOAD` is page aligned and does not fall in a reserved-memory
-   region from the vendor DTB — **pending**, no measured value;
+   region from the vendor DTB — **alignment and collision pass for the
+   candidate** (`evidence/dtbo-reserved.md`); the address itself is unmeasured;
 5. struct offsets keep every fake object inside its page — **passes** (BTF sizes
    and offsets above);
 6. release payload is exactly 104128 bytes — **not reached**, needs a build.

@@ -198,7 +198,11 @@ The other classes closed the same way:
   generator re-reads 32 rows and 256 source qwords.
 - **physical** — `P0_KERNEL_PHYS_LOAD` remains the only inherited value with no
   proof, because the live shell cannot read `/proc/iomem` or `/proc/cmdline` and
-  the BL payload exposes no literal.
+  the BL payload exposes no literal. The shipped base DT and DTBO do constrain
+  it: no reserved-memory carve-out in any of the 22 + 10 board variants overlaps
+  the candidate span, and the XBL ramdump carve-out ends exactly at 0xa8000000.
+  That makes the address plausible and collision-free, not measured;
+  `evidence/dtbo-reserved.md` has the table.
 
 `docs/PORT-STATUS.md` carries the per-row table and the reproduction commands.
 

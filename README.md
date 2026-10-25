@@ -51,7 +51,7 @@ enough to break the slide leak.
 | `SLIDE_PSELECT_WORD_SHIFT = 3` | derived from the Image's futex/pselect frames |
 | struct layout (`task_struct`, waiter, fops, page, workqueue, …) | confirmed against the Image's BTF |
 | `p0_fingerprint.h` | generated from the Image at probe `0x1f0000`; regeneration byte-identical |
-| `P0_KERNEL_PHYS_LOAD` | candidate `0xa8000000`, not measured |
+| `P0_KERNEL_PHYS_LOAD` | candidate `0xa8000000`, not measured; free space and collision-free in the shipped DT |
 | Payload build | blocked: no NDK on the build host, and the gate is closed |
 | KernelSU daemon | not started |
 
@@ -108,8 +108,9 @@ per-value evidence and commands are in
 What remains:
 
 1. measure `P0_KERNEL_PHYS_LOAD` from a reading that belongs to this boot chain
-   (root-side `/proc/iomem` or the BL load path), and check it against the vendor
-   reserved-memory regions;
+   (root-side `/proc/iomem` or the BL load path); the candidate is already
+   page-aligned and clear of every reserved-memory carve-out in the shipped DT
+   ([`evidence/dtbo-reserved.md`](evidence/dtbo-reserved.md));
 2. build the payload with an NDK, which the current host does not have;
 3. validate on the handset incrementally: reclaim, physical oracle, waiter
    rewrite, FOPS readback, `selinux_enforcing`;
