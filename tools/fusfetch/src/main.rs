@@ -10,7 +10,7 @@
 //! offset used here, and the tail is dropped if the server returns a non-multiple
 //! of 16.
 
-use cipher::{inout::InOutBuf, BlockDecryptMut};
+use cipher::{inout::InOutBuf, BlockModeDecrypt};
 use samloader_fus::FusClient;
 use std::io::Read;
 
@@ -60,9 +60,7 @@ fn parse_args() -> Args {
 fn main() {
     let args = parse_args();
     let mut client = FusClient::new().expect("FUS client");
-    client
-        .fetch_binary_info(&args.model, &args.region, &args.version)
-        .expect("binary inform");
+    client.fetch_binary_info(&args.model, &args.region, &args.version);
     println!(
         "file={} size={} version={}",
         client.info.filename, client.info.size, client.info.version

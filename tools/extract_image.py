@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Recover boot.img.lz4 and the kernel Image from a partial FUS download.
+"""Recover boot.img.lz4, the kernel Image, and BL payloads from a partial FUS
+download.
 
-FUS packages are ZIP archives whose payload entries are STORED (method 0), and
-the AP entry is an uncompressed tar.  That means a prefix of the package is
-usable on its own: the local file header gives the entry's name and length, and
-the tar inside can be walked without the ZIP central directory (which lives at
-the end of the file and is absent from a prefix).
+FUS packages begin with ZIP local headers, but their payloads are not uniform:
+the BL tar is stored (method 0) while the AP tar is deflate-compressed (method
+8) behind a ZIP64 data descriptor, so its compressed size is absent from the
+local header and the central directory at the end of the file is missing from a
+prefix.
+
+That leaves two paths:
+  - a stored tar can be walked in place from the prefix (scan/extract);
+  - a deflated tar is inflated forward and walked one entry at a time, keeping
+    only headers and the requested entry (stream).
 
 Usage:
   tools/extract_image.py prefix.dec scan
-  tools/extract_image.py prefix.dec extract --tar-hint AP --image boot.img.lz4 --outdir out
+  tools/extract_image.py prefix.dec extract --tar-hint BL --image abl.elf.lz4 --outdir out
+  tools/extract_image.py prefix.dec stream --tar-hint AP --image boot.img.lz4 --outdir out
   tools/extract_image.py - kernel --image out/boot.img.lz4 --outdir out
 """
 import argparse
@@ -139,6 +146,134 @@ def extract(buf, tar_hint, name, outdir):
     print(f"wrote {target} ({len(payload)} bytes, sha256 {hashlib.sha256(payload).hexdigest()})")
 
 
+def zip_entry(buf, name_hint):
+    for entry in zip_entries(buf):
+        if entry["name"].endswith((".tar", ".tar.md5")) and name_hint in entry["name"]:
+            return entry
+    sys.exit(f"no tar entry matching {name_hint!r} in the prefix")
+
+
+class TarStream:
+    """Streaming tar reader for a deflate stream whose size is unknown.
+
+    ZIP entries in a FUS package are written with a trailing data descriptor, so
+    their compressed size is not in the local header and a prefix cannot seek to
+    the next entry. Deflate still decompresses forward, so the tar inside can be
+    walked one entry at a time: headers and the requested entry are buffered,
+    everything else is discarded as it arrives.
+    """
+
+    def __init__(self, outdir, wanted_name):
+        self.outdir = Path(outdir)
+        self.outdir.mkdir(parents=True, exist_ok=True)
+        self.wanted = wanted_name
+        self.buf = bytearray()
+        self.skip = 0
+        self.writing = None
+        self.written = 0
+        self.wanted_size = None
+        self.done = False
+        self.seen = []
+
+    def feed(self, chunk):
+        if self.done:
+            return
+        self.buf += chunk
+        while not self.done:
+            if self.skip:
+                drop = min(self.skip, len(self.buf))
+                del self.buf[:drop]
+                self.skip -= drop
+                if self.skip:
+                    return
+                continue
+            if self.writing is not None:
+                take = min(self.wanted_size - self.written, len(self.buf))
+                if take:
+                    self.writing.write(bytes(self.buf[:take]))
+                    del self.buf[:take]
+                    self.written += take
+                if self.written == self.wanted_size:
+                    self.writing.close()
+                    self.done = True
+                return
+            if len(self.buf) < 512:
+                return
+            header = bytes(self.buf[:512])
+            if header == b"\x00" * 512:
+                self.done = True
+                return
+            if header[257:262] != b"ustar":
+                raise ValueError("tar header lost sync inside the stream")
+            raw_name = header[:100].split(b"\x00", 1)[0].decode("utf-8", "replace")
+            try:
+                size = int(header[124:136].split(b"\x00", 1)[0].strip() or b"0", 8)
+            except ValueError:
+                raise ValueError(f"bad tar size for {raw_name!r}")
+            typeflag = header[156:157]
+            del self.buf[:512]
+            if typeflag in (b"x", b"g", b"L"):
+                # Extended headers are metadata; skip their payload.
+                self.skip = (size + 511) // 512 * 512
+                continue
+            name = raw_name[2:] if raw_name.startswith("./") else raw_name
+            if name == self.wanted:
+                print(f"found {name} ({size} bytes)")
+                self.writing = open(self.outdir / name, "wb")
+                self.wanted_size = size
+                self.written = 0
+                if size == 0:
+                    self.writing.close()
+                    self.done = True
+                continue
+            self.seen.append(name)
+            self.skip = (size + 511) // 512 * 512
+
+
+def stream(buf, tar_hint, name, outdir):
+    entry = zip_entry(buf, tar_hint)
+    if entry["method"] != 8:
+        sys.exit(f"{entry['name']} is method {entry['method']}, not deflate; "
+                 "use extract for a stored entry")
+    start = entry["data"]
+    if entry["compressed"] != 0xFFFFFFFF and start + entry["compressed"] <= len(buf):
+        end = start + entry["compressed"]
+        print(f"entry is complete in the prefix: {entry['compressed']} compressed bytes")
+    else:
+        end = len(buf)
+        print(f"inflating {end - start} compressed package bytes from the prefix")
+
+    import zlib
+    inflater = zlib.decompressobj(-15)
+    reader = TarStream(outdir, name)
+    offset = start
+    chunk_size = 1 << 20
+    try:
+        while offset < end and not reader.done:
+            chunk = buf[offset:min(offset + chunk_size, end)]
+            offset += len(chunk)
+            try:
+                reader.feed(inflater.decompress(chunk))
+            except zlib.error as exc:
+                sys.exit(f"deflate failed at package offset 0x{offset:x}: {exc}")
+    finally:
+        if reader.writing is not None and not reader.done:
+            reader.writing.close()
+
+    if not reader.done:
+        sys.exit(f"{name} not completed: the prefix ended first. Entries seen: "
+                 + ", ".join(reader.seen[:15]))
+    if reader.wanted_size is None:
+        sys.exit(f"{name} not found. Entries seen: "
+                 + ", ".join(reader.seen[:40]))
+    if reader.written != reader.wanted_size:
+        sys.exit(f"{name} truncated: wrote {reader.written} of "
+                 f"{reader.wanted_size} bytes")
+    payload = Path(outdir) / name
+    print(f"wrote {payload} ({reader.written} bytes, sha256 "
+          f"{hashlib.sha256(payload.read_bytes()).hexdigest()})")
+
+
 def kernel(boot_lz4, outdir):
     """Decompress a Samsung boot image and slice out the ARM64 Image."""
     outdir = Path(outdir)
@@ -179,10 +314,15 @@ def main():
 
     sub.add_parser("scan", help="list ZIP and tar entries with offsets")
 
-    ex = sub.add_parser("extract", help="write one entry out of the AP/BL tar")
+    ex = sub.add_parser("extract", help="write one entry out of a stored AP/BL tar")
     ex.add_argument("--tar-hint", default="AP", help="substring of the tar entry name")
     ex.add_argument("--image", required=True, help="entry name, e.g. boot.img.lz4")
     ex.add_argument("--outdir", default="out")
+
+    st = sub.add_parser("stream", help="inflate a deflate entry and walk its tar incrementally")
+    st.add_argument("--tar-hint", default="AP", help="substring of the tar entry name")
+    st.add_argument("--image", required=True, help="tar entry to extract, e.g. boot.img.lz4")
+    st.add_argument("--outdir", default="out")
 
     ker = sub.add_parser("kernel", help="decompress boot.img.lz4 and slice the Image")
     ker.add_argument("--image", default="boot.img.lz4", help="path to the compressed boot image")
@@ -193,12 +333,14 @@ def main():
         kernel(Path(args.image), args.outdir)
         return
     if not args.prefix:
-        parser.error("prefix is required for scan/extract")
+        parser.error("prefix is required for scan/extract/stream")
     buf = Path(args.prefix).read_bytes()
     if args.command == "scan":
         scan(buf)
-    else:
+    elif args.command == "extract":
         extract(buf, args.tar_hint, args.image, args.outdir)
+    else:
+        stream(buf, args.tar_hint, args.image, args.outdir)
 
 
 if __name__ == "__main__":
