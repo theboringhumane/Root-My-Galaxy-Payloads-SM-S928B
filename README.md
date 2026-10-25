@@ -93,6 +93,7 @@ tools/fusfetch/              fetch + decrypt a byte range from Samsung FUS
 tools/extract_image.py       pull boot.img.lz4 and the kernel Image out of a prefix
 tools/inspect_image.py       read kallsyms and BTF out of the stripped Image
 tools/generate_p0_fingerprint.pl   build the P0 table from the raw Image
+tools/layout_check.c         compile-time check of the profile's geometry
 docs/                        method, delta record, status ledger
 evidence/                    what was measured, with commands and outputs
 ```
@@ -119,9 +120,9 @@ What remains:
 
 Runtime identity is **not** enforced by the shared payload: it does not read the
 `TARGET_GUARD_*` macros or call `getprop`. Those macros are the recorded contract
-for whatever loads the payload, and the build-time gate is the only automatic
-check in this repository. Confirm the model, build, fingerprint, kernel release
-and patch level yourself before running anything.
+for whatever loads the payload, and the build gate plus `tools/layout_check.c`
+are the only automatic checks in this repository. Confirm the model, build,
+fingerprint, kernel release and patch level yourself before running anything.
 
 ## Rules for this port
 

@@ -117,8 +117,9 @@
 #define FOPS_KERNEL_PAGE_SETUP_ATTEMPTS 1
 #define APP_FOPS_MIN_OBJECT_INDEX 0
 #define APP_FOPS_PSELECT_DELAY_USEC 50000
-/* An alternate skb data alignment shifts the FOPS bytes by 0x180. Keep a
- * second copy at the address corresponding to the same fake_fops pointer. */
+/* Unused in this tree, and it must stay that way: an absolute 0x2180 copy of
+ * the 0x110-byte table would end at 0x2290 and overwrite the fake rt_mutex at
+ * 0x2210.  Kept only because the source profile defines it. */
 #define APP_EZIF_FOPS_TABLE_ALT_OFF 0x2180
 
 /* Waiter field offsets are confirmed by this Image's BTF (rt_mutex_waiter is

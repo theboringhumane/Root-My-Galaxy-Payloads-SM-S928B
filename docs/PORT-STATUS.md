@@ -154,6 +154,16 @@ Two profile macro names do not match the BTF member name they target, and both
 were checked by offset rather than name: `FAKE_TASK_TASK_GROUP_OFF` targets
 `sched_task_group`, and `FOPS_IOCTL_OFF` targets `unlocked_ioctl`.
 
+`APP_EZIF_FOPS_TABLE_ALT_OFF` is inherited and unused in both profiles. It must
+stay unused: a 0x110-byte table at absolute 0x2180 would run to 0x2290 and
+overwrite the fake `rt_mutex` at 0x2210.
+
+`tools/layout_check.c` turns the tables above into `_Static_assert`s: every
+symbol offset inside the Image and aligned, the physical delta inside the direct
+map, every struct field inside its BTF size, every fake object inside the
+reclaimed order-3 page, the bank/oracle slot arithmetic, and the fingerprint
+probe covering all 32 rows. It needs only a host C11 compiler.
+
 ## Pending
 
 `P0_KERNEL_PHYS_LOAD` is the only value that blocks the build.
@@ -202,6 +212,9 @@ llvm-objdump -d --no-show-raw-insn \
 
 # fingerprint: regenerate and diff
 perl tools/generate_p0_fingerprint.pl out/kernel 0x1f0000 out/p0_fingerprint.h
+
+# profile geometry (host compiler; no NDK)
+clang -std=c11 -fsyntax-only -I src tools/layout_check.c
 ```
 
 ## Offline gate
@@ -212,12 +225,14 @@ The target builds only when all of these are true:
    pending row above is measured — **fails on `P0_KERNEL_PHYS_LOAD` only**;
 2. generated fingerprint table matches the Image it was generated from — **passes**
    (regeneration is byte-identical);
-3. symbol offsets are inside the Image and 4-byte aligned — **passes**;
+3. symbol offsets are inside the Image and 4-byte aligned — **passes**
+   (`tools/layout_check.c`);
 4. `P0_KERNEL_PHYS_LOAD` is page aligned and does not fall in a reserved-memory
    region from the vendor DTB — **alignment and collision pass for the
-   candidate** (`evidence/dtbo-reserved.md`); the address itself is unmeasured;
+   candidate** (`evidence/dtbo-reserved.md` and `tools/layout_check.c`); the
+   address itself is unmeasured;
 5. struct offsets keep every fake object inside its page — **passes** (BTF sizes
-   and offsets above);
+   above, asserted in `tools/layout_check.c`);
 6. release payload is exactly 104128 bytes — **not reached**, needs a build.
 
 ## Build
