@@ -1,0 +1,57 @@
+Tracefs verification of SLIDE_TRACEFS_WORKER_CALLER_OFF
+=======================================================
+
+Target : SM-S928B, S928BXXU6EZIF
+Kernel : 6.1.162-android14-11-34343818-abS928BXXU6EZIF
+Method : enable sched:sched_blocked_reason, capture per_cpu/*/trace_pipe_raw for
+         three seconds while repeatedly snapshotting /sys/kernel/tracing/trace,
+         then decode the raw pages with tools/parse_raw.py.
+Access : unprivileged shell user (group readtracefs). No root.
+
+Event ID, read directly from the kernel:
+
+  $ cat /sys/kernel/tracing/events/sched/sched_blocked_reason/id
+  106
+
+The text view names the frame but hides the address, which is why a raw capture
+is required:
+
+  sched_blocked_reason: pid=28167 iowait=0 caller=worker_thread+0xa0/0x430
+
+It is also the dominant caller on an idle phone: 3011 of 8124 lines in an
+earlier four-second capture, and 9930 of 15 repeated snapshots in this one.
+
+Raw decode, 358 events from CPU0 and CPU2:
+
+                caller    image_off  count  worker match
+  0xffffffc0081cb39c 0x00001cb39c    147  YES slide=0xf0000
+  0xffffffc008258fb8 0x0000258fb8     89  no
+  0xffffffc005658c40 0xfffffffffd658c40     70  no
+  0xffffffc005d9626c 0xfffffffffdd9626c     25  no
+  0xffffffc008258354 0x0000258354      8  no
+  0xffffffc0082e4564 0x00002e4564      7  no
+  0xffffffc005d11a1c 0xfffffffffdd11a1c      6  no
+  0xffffffc005d96e9c 0xfffffffffdd96e9c      5  no
+  0x0000000000000000 0x3ff8000000      1  no   (padding, not an event)
+
+One address satisfies the 64 KiB slide grid against the SM-S928N worker offset:
+
+  0x1cb39c - 0xdb39c = 0xf0000        aligned, inside 0..0x1f0000
+
+The check only uses the low 16 bits, which no KASLR slide can change:
+0x1cb39c & 0xffff == 0xdb39c & 0xffff == 0xb39c, and no other captured caller
+shares that value. 147 of 358 raw events carry it, which is what an idle
+kworker blocked in worker_thread should produce.
+
+What this proves: on this kernel the worker_thread blocking site is consistent
+with the inherited 0xdb39c offset, so the tracefs slide route is plausible here.
+
+What this does not prove: that 0xdb39c is exactly this Image's instruction
+address. A slide makes any offset in the same 64 KiB bucket look identical, and
+the text trace cannot be tied to individual raw events because both views
+consume or replay the same ring buffer. The firmware extraction disassembles
+worker_thread and resolves it directly; this capture is the runtime
+cross-check for that result, not a substitute.
+
+Not recorded here on purpose: the boot's slide value, device serial, and
+boot_id. The slide is per-boot and the other two identify the handset.

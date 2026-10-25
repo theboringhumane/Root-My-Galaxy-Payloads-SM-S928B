@@ -1,0 +1,10 @@
+build/
+out/
+tools/fusfetch/target/
+*.raw
+*.dec
+*.img
+*.lz4
+.DS_Store
+__pycache__/
+*.pyc

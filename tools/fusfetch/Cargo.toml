@@ -1,0 +1,12 @@
+[package]
+name = "fusfetch"
+version = "0.1.0"
+edition = "2021"
+description = "Fetch and decrypt a byte range from Samsung FUS"
+
+[dependencies]
+samloader-fus = "2.2.0"
+cipher = "0.5"
+
+[profile.release]
+opt-level = 2
