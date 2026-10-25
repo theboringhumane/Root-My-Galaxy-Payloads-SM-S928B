@@ -169,8 +169,9 @@ Both FV images carry the same GUID-defined section header
 payload beginning `1f 8b 08`: they are gzip streams, inflated with the Python
 standard library.  The first gives 0x446008 bytes and a DXE volume at +0x8; one
 of its drivers is the FFS file at +0x356660 (GUID
-81aa505a-aec3-0846-a0e3-41a2e69baf94, 0x26038 bytes), a PE32+ image starting at
-+0x24.
+5a50aa81-c3ae-4608-a0e3-41a2e69baf94, stored as the EFI_GUID fields
+`81 aa 50 5a ae c3 08 46 a0 e3 41 a2 e6 9b af 94`, 0x26038 bytes), a PE32+
+image starting at +0x24.
 
 That driver carries the Samsung GUID at VA 0x23078 and two adjacent UTF-16
 names at 0x1c428 / 0x1c446: `KernelBaseAddr` and `KernelSize`.  gRT is held at
@@ -191,7 +192,13 @@ names at 0x1c428 / 0x1c446: `KernelBaseAddr` and `KernelSize`.  gRT is held at
   7044  ldr  x8, [x8, #0x58]     ; SetVariable
   7048  mov  w3, #0x8
   704c  blr  x8
-  7050  ...                      ; "KernelSize" from entry MemSize
+  7050  ldr  x8, [x20, #0x9e0]   ; gRT
+  7058  add  x4, x21, #0x28      ; value = entry MemSize
+  705c  add  x0, x0, #0x446      ; "KernelSize"
+  7064  mov  w2, #0x2
+  7068  mov  w3, #0x8
+  706c  ldr  x8, [x8, #0x58]     ; SetVariable
+  7070  blr  x8
 
 0x4300 is a trampoline into a platform-config protocol; the same routine logs
 `Failed to Get Kernel info from UEFI Plat cfg` on failure.  The entry is looked
@@ -221,6 +228,40 @@ No ABL app writes the two variables.  Only LinuxLoader names them, and its
 `[gRT + 0x58]` sites do not exist; the other ABL apps use the same GUID for
 `SODResult`, `KmsgOffset`, `CryptoResult` and `sha256Result`, and two of them
 do call SetVariable, but never for these names.
+
+Structural self-check
+---------------------
+
+The parse above is re-walked by `tools/verify_uefi_chain.py`, a stdlib-only
+script that reads the same extracted `uefi.elf` and asserts:
+
+  - the ELF has one PT_LOAD, file 0x1000, VMA 0xa7000000, size 0x2f0000;
+  - the outer FV header is `_FVH`, `FvLength` 0x2f0000, `HeaderLength` 0x48,
+    its 16-bit header checksum is 0, and its block map is 0x2f0 blocks of
+    0x1000 = 0x2f0000 ending exactly at `HeaderLength`;
+  - the five files chain with no gap: PAD 0xfa0, SEC 0x4f018, FREEFORM 0xf7a,
+    FV_IMAGE 0x17112a, FV_IMAGE 0x1273ff, each landing on the next 8-byte
+    aligned header;
+  - both GUID-defined sections decompress with CRC32 and ISIZE verified by
+    zlib, to 0x446008 and 0x342008 bytes, and each payload holds an FV whose
+    own header checksum is 0 and whose block map covers its `FvLength`; the
+    volume that holds the driver has 67 files, all chaining without a gap;
+  - the DXE-core file (type 0x05) at nested +0x76e0 carries name bytes
+    `7f cb a2 d6 18 6a 2f 4e ...`, which decode to
+    `d6a2cb7f-6a18-4e2f-b43b-9920a733700a` under EFI_GUID field packing; the
+    same decode of the driver's name yields the GUID given above, and the
+    driver PE is aa64 with `ImageBase` 0;
+  - `KernelBaseAddr` (UTF-16 at PE+0x1c428) and `KernelSize` (PE+0x1c446) are
+    each present once, the ASCII key `Kernel` is at PE+0x1cfb4, and the
+    Samsung variable GUID occurs once, at PE+0x23078.
+
+`python3 tools/verify_uefi_chain.py out/uefi.elf` prints `PASS (0 failed)`.
+
+The file-state bytes in these volumes are the complement of the usual ones
+(a valid file reads 0xf8, not 0x06) because the erase polarity is 1, so a
+header walk that tests the state byte stops at the first PAD.  Walking by the
+24-bit size and validating each file's section chain lands exactly on every
+file boundary instead, which is what the tool does.
 
 What this does and does not establish
 -------------------------------------

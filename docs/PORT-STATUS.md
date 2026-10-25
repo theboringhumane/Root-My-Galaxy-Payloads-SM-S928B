@@ -242,6 +242,12 @@ tools/extract_image.py prefix.dec stream --tar-hint BL \
 lz4 -d out/xbl_config.elf.lz4 out/xbl_config.elf
 tools/dtb_dump.py out/xbl_config.elf --offset 0x140c4 --path /soc/memorymap
 
+# who publishes the region into the variables LinuxLoader reads
+tools/extract_image.py prefix.dec stream --tar-hint BL \
+  --image uefi.elf.lz4 --outdir out
+lz4 -d out/uefi.elf.lz4 out/uefi.elf
+tools/verify_uefi_chain.py out/uefi.elf
+
 # profile geometry (host compiler; no NDK)
 clang -std=c11 -fsyntax-only -I src tools/layout_check.c
 ```

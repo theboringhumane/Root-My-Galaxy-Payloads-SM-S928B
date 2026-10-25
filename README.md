@@ -95,6 +95,7 @@ tools/fusfetch/              fetch + decrypt a byte range from Samsung FUS
 tools/extract_image.py       pull boot.img.lz4 and the kernel Image out of a prefix
 tools/inspect_image.py       read kallsyms and BTF out of the stripped Image
 tools/dtb_dump.py            walk an FDT embedded in a firmware image
+tools/verify_uefi_chain.py   re-walk the UEFI volumes and check the driver chain
 tools/generate_p0_fingerprint.pl   build the P0 table from the raw Image
 tools/layout_check.c         compile-time check of the profile's geometry
 docs/                        method, delta record, status ledger
