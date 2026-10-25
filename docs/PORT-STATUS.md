@@ -160,10 +160,11 @@ stay unused: a 0x110-byte table at absolute 0x2180 would run to 0x2290 and
 overwrite the fake `rt_mutex` at 0x2210.
 
 `tools/layout_check.c` turns the tables above into `_Static_assert`s: every
-symbol offset inside the Image and aligned, the physical delta inside the direct
-map, every struct field inside its BTF size, every fake object inside the
-reclaimed order-3 page, the bank/oracle slot arithmetic, and the fingerprint
-probe covering all 32 rows. It needs only a host C11 compiler.
+symbol offset inside the Image and aligned, the load address and the whole
+Image span inside the BL's `Kernel` region, the physical delta inside the
+direct map, every struct field inside its BTF size, every fake object inside
+the reclaimed order-3 page, the bank/oracle slot arithmetic, and the
+fingerprint probe covering all 32 rows. It needs only a host C11 compiler.
 
 ## Pending
 

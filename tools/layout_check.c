@@ -91,6 +91,14 @@ _Static_assert(P0_KERNEL_PHYS_LOAD >= P0_PHYS_OFFSET,
 _Static_assert(!(P0_KERNEL_PHYS_LOAD >= 0xa7d00000ULL &&
                  P0_KERNEL_PHYS_LOAD < 0xa8000000ULL),
                "kernel load address falls in the XBL ramdump carveout");
+/* xbl_config.elf's memorymap labels exactly one region Kernel: 0xa8000000 +
+ * 0x10000000.  A load address outside it, or an Image that does not fit,
+ * would contradict the boot chain's own map (evidence/xbl-memorymap.md). */
+_Static_assert(P0_KERNEL_PHYS_LOAD >= 0xa8000000ULL &&
+                   P0_KERNEL_PHYS_LOAD < 0xb8000000ULL,
+               "kernel load address leaves the BL Kernel region");
+_Static_assert(P0_KERNEL_PHYS_LOAD + IMAGE_BYTES <= 0xb8000000ULL,
+               "Image span leaves the BL Kernel region");
 
 /* p0_data_alias()/p0_alias_image_offset() OR the physical delta into
  * P0_PAGE_OFFSET, so the delta must not reach any bit PAGE_OFFSET already
