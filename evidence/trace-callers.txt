@@ -53,5 +53,18 @@ consume or replay the same ring buffer. The firmware extraction disassembles
 worker_thread and resolves it directly; this capture is the runtime
 cross-check for that result, not a substitute.
 
+Closed against the Image
+------------------------
+
+The extraction was done, and it agrees with the capture:
+
+  worker_thread           0xffffffc0080db2fc  (kallsyms, 0x430 bytes to next)
+  0xffffffc0080db398      bl schedule
+  0xffffffc0080db39c      worker_thread+0xa0, the return address
+
+So 0xdb39c names the worker_thread frame that blocks, exactly as the text
+trace printed it. The capture above stays as the runtime record; the Image is
+what fixes the offset.
+
 Not recorded here on purpose: the boot's slide value, device serial, and
 boot_id. The slide is per-boot and the other two identify the handset.

