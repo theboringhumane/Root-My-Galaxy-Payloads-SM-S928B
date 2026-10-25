@@ -19,20 +19,23 @@
  * page.  0x80000000 is the gunyah_hyp_region anchor from the vendor DTB, which
  * is a reserved carveout below the first RAM page, not where RAM starts. */
 #define P0_PHYS_OFFSET 0x816e0000ULL
-/* P0_KERNEL_PHYS_LOAD is an inherited candidate, not a measurement.
+/* P0_KERNEL_PHYS_LOAD is the base of the BL's "Kernel" memory region, not yet a
+ * reading from a running boot.
  *
  * A wrong value here mis-points both p0_data_alias() (the misc_fops readback)
  * and p0_alias_image_offset() (the physical-P0 slide).  It is the physical
  * address ABL/SPL loads the Image at, so it cannot be derived from memstart:
  * the device-validated DZF2 profile pairs 0xa8000000 with memstart 0x80000000
  * (+0x28000000), while this build's memstart is 0x816e0000, and adding the same
- * delta would give 0xa96e0000.  Read the load address out of this build's BL
- * archive before relying on either value.
+ * delta would give 0xa96e0000.
  *
- * The live DTB does expose the same reserved-memory layout as DZF2
- * (gunyah_hyp_region@80000000, sec_xbl_ramdump@A7D00000, llcc_lpi_region@
- * ff800000), and 0xa8000000 falls in the free span above 0x9df00000, which is
- * why it is the candidate and not a guess from nothing. */
+ * The BL package for this build declares the placement: xbl_config.elf's
+ * /soc/memorymap has memory@A8000000, MemLabel "Kernel",
+ * reg = <0xa8000000 0x10000000>.  The map's NOMAP region ends at this memstart,
+ * UEFI_RESV ends at 0xa8000000, and no Linux carve-out overlaps the Image span
+ * (evidence/xbl-memorymap.md).  LinuxLoader reads the address from the
+ * KernelBaseAddr UEFI variable, so confirm it on a running boot before relying
+ * on the value. */
 #define P0_KERNEL_PHYS_LOAD 0xa8000000ULL
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
 #define KERNELSNITCH_IDENTITY_END 0xffffff9000000000ULL

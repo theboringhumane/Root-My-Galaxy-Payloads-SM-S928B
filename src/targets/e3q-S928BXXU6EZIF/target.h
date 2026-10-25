@@ -10,9 +10,12 @@
  * P0_ORACLE_PROBE_OFFSET.  SLIDE_PSELECT_WORD_SHIFT comes from this Image's
  * futex/pselect frames (see ezif_layout.h).
  *
- * P0_KERNEL_PHYS_LOAD is still an inherited candidate with no offline proof:
- * /proc/iomem and /proc/cmdline are denied to the shell and the BL archive
- * exposes no matching literal.
+ * P0_KERNEL_PHYS_LOAD is declared by the BL package this Image ships in: its
+ * XBL memory map gives a 256 MiB region labelled "Kernel" at 0xa8000000; the
+ * map's NOMAP region ends at the live memstart and UEFI_RESV ends at that base
+ * (evidence/xbl-memorymap.md).  That is a boot-chain declaration, not a reading
+ * from a running boot: /proc/iomem and /proc/cmdline are denied to the shell,
+ * and the address travels through UEFI variables, not a code literal.
  *
  * The offline gate in docs/PORT-STATUS.md must pass before this profile is
  * built or run. The build is hard-blocked below until then.
@@ -60,8 +63,8 @@
  * not the rb_erase write - is what fails on a kernel-image .data page. */
 #define APP_FOPS_DEFER_ALIAS_READBACK 0
 #define APP_FOPS_DURABLE_POSTWRITE_LOG 1
-/* EZIF keeps the decompressed kernel image at the fixed physical load proved
- * from ABL/DTB. KASLR relocates its canonical virtual mapping only. */
+/* EZIF's boot chain declares a fixed physical load for the image in its XBL
+ * memory map. KASLR relocates only the canonical virtual mapping. */
 #define APP_EZIF_FIXED_PHYS_DATA_ALIAS 0
 /* Shizuku exposes the exact tracefs caller, so physical P0 is needed only to
  * prove a live reclaim in this process.  Do not place a kernel-image linear

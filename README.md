@@ -10,10 +10,11 @@ method and tooling used to derive it from the validated `SM-S928N`
 >
 > The profile's symbol offsets, struct offsets and P0 fingerprint are derived
 > from the exact `S928BXXU6EZIF` kernel Image. One value — the physical load
-> address — is still inherited rather than measured, so `target.h` contains an
-> `#error` that refuses to compile. Do not remove it to "see what happens": a
-> kernel exploit with the wrong physical anchor writes to a real address that is
-> not the symbol, and the usual result is a panic.
+> address — is declared by the shipped bootloader's memory map but has not been
+> read from a running boot, so `target.h` contains an `#error` that refuses to
+> compile. Do not remove it to "see what happens": a kernel exploit with the
+> wrong physical anchor writes to a real address that is not the symbol, and the
+> usual result is a panic.
 >
 > When it is finished, it will still be a kernel exploit. A failed attempt can
 > panic and reboot the phone. Nothing here is signed, supported, or guaranteed.
@@ -51,7 +52,7 @@ enough to break the slide leak.
 | `SLIDE_PSELECT_WORD_SHIFT = 3` | derived from the Image's futex/pselect frames |
 | struct layout (`task_struct`, waiter, fops, page, workqueue, …) | confirmed against the Image's BTF |
 | `p0_fingerprint.h` | generated from the Image at probe `0x1f0000`; regeneration byte-identical |
-| `P0_KERNEL_PHYS_LOAD` | candidate `0xa8000000`, not measured; free space and collision-free in the shipped DT |
+| `P0_KERNEL_PHYS_LOAD` | declared `0xa8000000` by the BL's XBL memory map (`Kernel` region); not yet read from a running boot |
 | Payload build | blocked: no NDK on the build host, and the gate is closed |
 | KernelSU daemon | not started |
 
@@ -92,6 +93,7 @@ tools/verify-tracefs.sh      capture and check the worker caller on a live phone
 tools/fusfetch/              fetch + decrypt a byte range from Samsung FUS
 tools/extract_image.py       pull boot.img.lz4 and the kernel Image out of a prefix
 tools/inspect_image.py       read kallsyms and BTF out of the stripped Image
+tools/dtb_dump.py            walk an FDT embedded in a firmware image
 tools/generate_p0_fingerprint.pl   build the P0 table from the raw Image
 tools/layout_check.c         compile-time check of the profile's geometry
 docs/                        method, delta record, status ledger
@@ -108,9 +110,10 @@ per-value evidence and commands are in
 
 What remains:
 
-1. measure `P0_KERNEL_PHYS_LOAD` from a reading that belongs to this boot chain
-   (root-side `/proc/iomem` or the BL load path); the candidate is already
-   page-aligned and clear of every reserved-memory carve-out in the shipped DT
+1. confirm `P0_KERNEL_PHYS_LOAD` on a running boot (root-side `/proc/iomem`, or
+   the physical P0 oracle); the BL memory map names the `Kernel` region at
+   `0xa8000000` ([`evidence/xbl-memorymap.md`](evidence/xbl-memorymap.md)) and
+   it is clear of every reserved-memory carve-out
    ([`evidence/dtbo-reserved.md`](evidence/dtbo-reserved.md));
 2. build the payload with an NDK, which the current host does not have;
 3. validate on the handset incrementally: reclaim, physical oracle, waiter

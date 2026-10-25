@@ -2,8 +2,9 @@
 
 **Status: not built, not run, not rooted.** The profile now carries symbol
 offsets, struct offsets and a P0 fingerprint derived from the exact
-`S928BXXU6EZIF` Image. One physical anchor and every on-device check remain
-open, so `target.h` still refuses to compile.
+`S928BXXU6EZIF` Image. The BL package that ships with it declares the kernel's
+physical region at `0xa8000000`, but a declaration is not a reading from a
+running boot, so `target.h` still refuses to compile.
 
 Do not remove the gate to "try it". A profile with an unmeasured physical anchor
 writes to a real address that is not the symbol; the failure mode is a panic,
@@ -64,7 +65,7 @@ table ships separately, so the tables were read out of the Image itself with
 | `SLIDE_PSELECT_WORD_SHIFT = 3` | verified | frame arithmetic below |
 | `rt_mutex_waiter`, `task_struct`, `file_operations`, page/slab, configfs, workqueue, pipe offsets | verified | BTF (`tools/inspect_image.py btf`) |
 | `p0_fingerprint.h` | verified | generated from this Image at probe 0x1f0000; regeneration is byte-identical and the generator re-reads all 32 rows / 256 qwords |
-| `P0_KERNEL_PHYS_LOAD = 0xa8000000` | **candidate, pending** | inherited from the DZF2 profile; free space and outside every vendor carve-out (`evidence/dtbo-reserved.md`), but the load path is unmeasured |
+| `P0_KERNEL_PHYS_LOAD = 0xa8000000` | **declared, pending** | the BL's `xbl_config.elf` `/soc/memorymap/memory@A8000000` is `MemLabel = "Kernel"`, `reg = <0xa8000000 0x10000000>`; `UEFI_RESV` ends at its base, the map's `NOMAP` region ends at the live `memstart`, and it collides with no DT carve-out (`evidence/xbl-memorymap.md`). Not yet read from a running boot. |
 
 `P0_PHYS_OFFSET` is `memstart_addr`, not a DRAM base. The value matches the
 reference profile exactly, which is expected on the same platform binary, and it
@@ -172,24 +173,42 @@ It cannot be closed from `memstart`: DZF2 pairs `0xa8000000` with
 `memstart 0x80000000` (+0x28000000), and this device's `memstart` is
 `0x816e0000`, so the same delta would give `0xa96e0000`. The load address is a
 property of the boot chain. `/proc/iomem` and `/proc/cmdline` are denied to the
-shell, the ABL payload is a UEFI volume with no matching literal, and the PE
-`ImageBase` is 0, so the value stays inherited until a root-side or bootloader
-reading closes it.
+shell, and the PE `ImageBase` is 0.
 
-What the shipped DT does say is recorded in `evidence/dtbo-reserved.md`. The
+The boot chain itself now supplies a placement for this exact package. The BL
+member carries `xbl_config.elf`, whose second FDT has `/soc/memorymap`:
+
+```text
+/soc/memorymap/memory@A8000000
+  reg = <0x00000000 0xa8000000 0x00000000 0x10000000>
+  MemLabel = "Kernel"
+```
+
+That is 256 MiB, 2 MiB aligned, beginning exactly where `UEFI_RESV` ends and
+clear of every Linux-side carve-out.  The same map's `NOMAP` region ends at
+0x816e0000, which is the live `memstart` to the byte.
+`evidence/xbl-memorymap.md` records the extraction, the full map, and the
+cross-checks against the live kernel, the UEFI image and the DTBO.
+
+This is stronger than free space, but it is still not a runtime measurement.
+LinuxLoader reads `KernelBaseAddr` and `KernelSize` from Samsung UEFI variables
+and adds the Image's `text_offset` (0 here), or 0x8000 / 0x80000 when the arm64
+header is not recognised; the shell cannot read those variables, and the
+LinuxLoader boot path materialises no such constant.  The value is
+therefore boot-chain authored and agrees with the validated sibling profile,
+but the row stays pending until a running boot confirms it.
+
+What the shipped DT says is recorded in `evidence/dtbo-reserved.md`. The
 base DT in `vendor_boot.img` lists 88 reserved-memory carve-outs across 22 board
 variants; the DTBO adds `sec_xbl_ramdump@A7D00000` (0xa7d00000 + 0x300000,
 ending exactly at 0xa8000000). No carve-out in any variant overlaps
-`[0xa8000000, 0xaa710000)`, so the candidate is free space, sits at the top of
-the XBL ramdump carve-out, and passes the reserved-collision check. That is a
-constraint, not a measurement: it says the address is *usable*, not that the
-boot chain loads there.
+`[0xa8000000, 0xaa710000)`.
 
 Rows still open after that:
 
 | Value | How it is closed |
 | --- | --- |
-| `P0_KERNEL_PHYS_LOAD` | read the load address from a root-side `/proc/iomem` or the BL load path; the candidate is already aligned and outside every vendor carve-out |
+| `P0_KERNEL_PHYS_LOAD` | confirm on a running boot: root-side `/proc/iomem`, or the physical P0 oracle, which is the exploit's first step and fails before any kernel write; the BL declares the region base `0xa8000000` |
 | lane/bank geometry (`SLIDE_BANK_SLOTS`, `SLIDE_S928_BANK_*`) | on-device: re-check against the reclaimed page layout |
 | live reclaim and FOPS readback | on-device, after a build exists |
 
@@ -213,6 +232,12 @@ llvm-objdump -d --no-show-raw-insn \
 # fingerprint: regenerate and diff
 perl tools/generate_p0_fingerprint.pl out/kernel 0x1f0000 out/p0_fingerprint.h
 
+# boot-chain kernel region (BL member of the same package)
+tools/extract_image.py prefix.dec stream --tar-hint BL \
+  --image xbl_config.elf.lz4 --outdir out
+lz4 -d out/xbl_config.elf.lz4 out/xbl_config.elf
+tools/dtb_dump.py out/xbl_config.elf --offset 0x140c4 --path /soc/memorymap
+
 # profile geometry (host compiler; no NDK)
 clang -std=c11 -fsyntax-only -I src tools/layout_check.c
 ```
@@ -222,15 +247,16 @@ clang -std=c11 -fsyntax-only -I src tools/layout_check.c
 The target builds only when all of these are true:
 
 1. `#error` removed **and** `ALLOW_UNVERIFIED_S928B` unnecessary because every
-   pending row above is measured — **fails on `P0_KERNEL_PHYS_LOAD` only**;
+   pending row above is measured — **fails on `P0_KERNEL_PHYS_LOAD` only** (it
+   is declared by the BL memory map, not read from a running boot);
 2. generated fingerprint table matches the Image it was generated from — **passes**
    (regeneration is byte-identical);
 3. symbol offsets are inside the Image and 4-byte aligned — **passes**
    (`tools/layout_check.c`);
 4. `P0_KERNEL_PHYS_LOAD` is page aligned and does not fall in a reserved-memory
-   region from the vendor DTB — **alignment and collision pass for the
-   candidate** (`evidence/dtbo-reserved.md` and `tools/layout_check.c`); the
-   address itself is unmeasured;
+   region from the vendor DTB — **alignment and collision pass**
+   (`evidence/dtbo-reserved.md`, `evidence/xbl-memorymap.md` and
+   `tools/layout_check.c`); the address itself is unmeasured;
 5. struct offsets keep every fake object inside its page — **passes** (BTF sizes
    above, asserted in `tools/layout_check.c`);
 6. release payload is exactly 104128 bytes — **not reached**, needs a build.
@@ -268,7 +294,10 @@ signing-block parser changed between releases.
 
 ## Next step
 
-Close `P0_KERNEL_PHYS_LOAD` from a reading that belongs to this boot chain, then
-build and validate incrementally: reclaim, oracle, waiter rewrite, FOPS readback,
-`selinux_enforcing`. Each value change lands with the Image size and SHA-256 that
-produced it.
+Confirm `P0_KERNEL_PHYS_LOAD` on a running boot. The BL memory map names the
+Kernel region at `0xa8000000`, so a build made with
+`ALLOW_UNVERIFIED_S928B` still starts with the physical P0 oracle: it either
+recovers the slide or recovers nothing, before any kernel write. Then validate
+incrementally: reclaim, oracle, waiter rewrite, FOPS readback,
+`selinux_enforcing`. Each value change lands with the Image size and SHA-256
+that produced it.
