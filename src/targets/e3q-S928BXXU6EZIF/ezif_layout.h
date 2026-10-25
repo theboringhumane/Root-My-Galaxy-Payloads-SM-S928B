@@ -6,7 +6,8 @@
  * Offsets below were re-derived from the S928BXXU6EZIF Image: kallsyms for
  * symbols, BTF for structures, disassembly for the syscall frames.  Values
  * without that provenance are marked where they are defined.
- * P0_KERNEL_PHYS_LOAD has no offline proof yet.  See docs/PORT-STATUS.md. */
+ * P0_KERNEL_PHYS_LOAD has boot-chain evidence but no runtime proof yet.
+ * See docs/PORT-STATUS.md. */
 #define KIMAGE_TEXT_BASE 0xffffffc008000000ULL
 #define P0_PAGE_OFFSET 0xffffff8000000000ULL
 /* memstart_addr, not "DRAM base".  util.c computes __pa() as
@@ -33,9 +34,11 @@
  * /soc/memorymap has memory@A8000000, MemLabel "Kernel",
  * reg = <0xa8000000 0x10000000>.  The map's NOMAP region ends at this memstart,
  * UEFI_RESV ends at 0xa8000000, and no Linux carve-out overlaps the Image span
- * (evidence/xbl-memorymap.md).  LinuxLoader reads the address from the
- * KernelBaseAddr UEFI variable, so confirm it on a running boot before relying
- * on the value. */
+ * (evidence/xbl-memorymap.md).  The same package's uefi.elf carries the driver
+ * that resolves that entry by MemLabel and writes its MemBase/MemSize as the
+ * KernelBaseAddr/KernelSize variables LinuxLoader reads, so the address is
+ * authored by the boot chain rather than free space; confirm it on a running
+ * boot before relying on the value. */
 #define P0_KERNEL_PHYS_LOAD 0xa8000000ULL
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
 #define KERNELSNITCH_IDENTITY_END 0xffffff9000000000ULL

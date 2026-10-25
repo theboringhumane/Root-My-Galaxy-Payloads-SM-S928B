@@ -12,10 +12,13 @@
  *
  * P0_KERNEL_PHYS_LOAD is declared by the BL package this Image ships in: its
  * XBL memory map gives a 256 MiB region labelled "Kernel" at 0xa8000000; the
- * map's NOMAP region ends at the live memstart and UEFI_RESV ends at that base
- * (evidence/xbl-memorymap.md).  That is a boot-chain declaration, not a reading
- * from a running boot: /proc/iomem and /proc/cmdline are denied to the shell,
- * and the address travels through UEFI variables, not a code literal.
+ * map's NOMAP region ends at the live memstart and UEFI_RESV ends at that base.
+ * The same package's uefi.elf carries the driver that resolves that entry by
+ * MemLabel and publishes its MemBase/MemSize as the KernelBaseAddr/KernelSize
+ * variables LinuxLoader consumes (evidence/xbl-memorymap.md).  That is a
+ * boot-chain declaration, not a reading from a running boot: /proc/iomem and
+ * /proc/cmdline are denied to the shell, and the address travels through UEFI
+ * variables, not a code literal.
  *
  * The offline gate in docs/PORT-STATUS.md must pass before this profile is
  * built or run. The build is hard-blocked below until then.

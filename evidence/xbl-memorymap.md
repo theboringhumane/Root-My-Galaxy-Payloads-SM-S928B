@@ -5,7 +5,9 @@ Target : SM-S928B, S928BXXU6EZIF
 Image  : out/kernel, image_size 0x2710000 (38,140,416 bytes)
 Method : stream the BL tar out of the decrypted FUS prefix, decompress
          xbl_config.elf, parse its embedded FDTs, and read the
-         /soc/memorymap the XBL firmware hands to the UEFI boot chain.
+         /soc/memorymap the XBL firmware hands to the UEFI boot chain; then
+         follow the UEFI driver that publishes the map's Kernel region into
+         the variables LinuxLoader reads.
 
 Access : offline.  Nothing was read from the running phone for this file; the
          one live number quoted below (/proc/zoneinfo) was measured earlier and
@@ -150,6 +152,76 @@ through the UEFI variables.  For this Image `text_offset` is 0, so a
 `KernelBaseAddr` branch would place the Image file's first byte at the variable
 value itself, and the map names that value 0xa8000000.
 
+Who writes the variables
+------------------------
+
+`uefi.elf` in the same BL tar is the `UEFI_FD` image: one ELF segment at file
+0x1000, VMA 0xa7000000, size 0x2f0000.  Its first firmware volume starts at
+file 0x1000 (`FvLength` 0x2f0000, header 0x48), and the files chain as:
+
+  0x01fe8  SEC       0x4f018
+  0x51000  FREEFORM  0x00f7a   section name `uefiplat.cfg`, raw `uefiplatLA.cfg`
+  0x51f80  FV_IMAGE  0x17112a  GUID-defined section, gzip payload at 0x51fb0
+  0x1c30b0 FV_IMAGE  0x1273ff  same section GUID, gzip payload at 0x1c30e0
+
+Both FV images carry the same GUID-defined section header
+(`1d301fe9-be79-4353-91c2-d23bc959ae0c`, data offset 0x18, attributes 1) and a
+payload beginning `1f 8b 08`: they are gzip streams, inflated with the Python
+standard library.  The first gives 0x446008 bytes and a DXE volume at +0x8; one
+of its drivers is the FFS file at +0x356660 (GUID
+81aa505a-aec3-0846-a0e3-41a2e69baf94, 0x26038 bytes), a PE32+ image starting at
++0x24.
+
+That driver carries the Samsung GUID at VA 0x23078 and two adjacent UTF-16
+names at 0x1c428 / 0x1c446: `KernelBaseAddr` and `KernelSize`.  gRT is held at
+[0x2309e0].  The routine at 0x6f24 reads a platform-config entry named
+`Kernel` (ASCII at 0x1cfb4) into a local structure, then writes both variables:
+
+  6fd4  adrp x0, 0x1c000
+  6fdc  add  x0, x0, #0xfb4      ; "Kernel"
+  6fe4  bl   0x4300              ; lookup, result at sp+0x20
+  6fe8  cbz  x0, 0x7024
+  ...
+  7024  ldr  x8, [x20, #0x9e0]   ; gRT
+  7028  adrp x19, 0x23000
+  7030  add  x19, x19, #0x78     ; 882f8c2b-9646-435f-8de5-f208ff80c1bd
+  7034  add  x4, x21, #0x20      ; value = entry MemBase
+  7038  add  x0, x0, #0x428      ; "KernelBaseAddr"
+  7040  mov  w2, #0x2            ; EFI_VARIABLE_BOOTSERVICE_ACCESS
+  7044  ldr  x8, [x8, #0x58]     ; SetVariable
+  7048  mov  w3, #0x8
+  704c  blr  x8
+  7050  ...                      ; "KernelSize" from entry MemSize
+
+0x4300 is a trampoline into a platform-config protocol; the same routine logs
+`Failed to Get Kernel info from UEFI Plat cfg` on failure.  The entry is looked
+up by the literal name `Kernel`, which is the `MemLabel` of the memorymap node
+quoted above, and the two values written are the entry's `MemBase` and
+`MemSize`.  The routine also publishes `Shared_IMEM_Base`,
+`PvmFwBaseAddr` and `PvmFwSize` from the same table.  Its caller validates a
+preloaded kernel against that entry with
+
+  (KernelAddress >= Region.MemBase) &&
+  ((KernelAddress + KernelSize) <= (Region.MemBase + Region.MemSize))
+
+(string at 0x1cfbb, asserted from `PlatformBdsLib.c` line 1013).  The embedded
+`uefiplatLA.cfg` contains no `Kernel` entry, so the value written is the
+runtime platform-config entry, not a static constant in that file.
+
+Both ends of the chain are therefore present in this BL package:
+
+  memorymap memory@A8000000, MemLabel "Kernel", MemBase 0xa8000000,
+  MemSize 0x10000000
+    -> UEFI PlatformBds: SetVariable(KernelBaseAddr = MemBase,
+                                     KernelSize = MemSize)
+    -> LinuxLoader: GetVariable(KernelBaseAddr, KernelSize), Image at
+                    KernelBaseAddr + text_offset (0)
+
+No ABL app writes the two variables.  Only LinuxLoader names them, and its
+`[gRT + 0x58]` sites do not exist; the other ABL apps use the same GUID for
+`SODResult`, `KmsgOffset`, `CryptoResult` and `sha256Result`, and two of them
+do call SetVariable, but never for these names.
+
 What this does and does not establish
 -------------------------------------
 
@@ -157,13 +229,17 @@ Establishes: the boot chain that ships with this exact BL package declares a
 256 MiB region, labelled `Kernel`, starting at 0xa8000000; the region is free
 of every Linux-side carve-out, fits the Image, and is 2 MiB aligned.  The map
 matches the live kernel's linear-map start to the byte, and matches the UEFI
-and ABL placements in the same package.  This is a boot-chain source for the
-inherited value, not a coincidence of free space.
+and ABL placements in the same package.  The same package also contains the
+driver that looks this entry up by its `MemLabel` and writes its `MemBase` and
+`MemSize` into the two UEFI variables LinuxLoader reads.  This is a boot-chain
+source and an authoring path for the inherited value, not a coincidence of free
+space.
 
-Does not establish: that a particular running boot took the
-`KernelBaseAddr` branch and that the variable held exactly 0xa8000000.  That is
-a runtime fact: the shell cannot read `/proc/iomem`, `/proc/cmdline` or the
-UEFI variables, and the loader path materialises no such constant.
+Does not establish: that this boot dispatched that driver, that the platform
+config resolved `Kernel` to this node, and that the variables held exactly
+0xa8000000 when LinuxLoader read them.  Those are runtime facts: the shell
+cannot read `/proc/iomem`, `/proc/cmdline` or the UEFI variables, and the
+loader path materialises no such constant.
 The row therefore stays **declared, not measured**, and the build gate stays
 closed.  The first on-device check is the physical P0 oracle: if the anchor is
 right it recovers the slide; if it is wrong it recovers nothing, before any

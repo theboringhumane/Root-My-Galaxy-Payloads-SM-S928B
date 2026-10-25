@@ -65,7 +65,7 @@ table ships separately, so the tables were read out of the Image itself with
 | `SLIDE_PSELECT_WORD_SHIFT = 3` | verified | frame arithmetic below |
 | `rt_mutex_waiter`, `task_struct`, `file_operations`, page/slab, configfs, workqueue, pipe offsets | verified | BTF (`tools/inspect_image.py btf`) |
 | `p0_fingerprint.h` | verified | generated from this Image at probe 0x1f0000; regeneration is byte-identical and the generator re-reads all 32 rows / 256 qwords |
-| `P0_KERNEL_PHYS_LOAD = 0xa8000000` | **declared, pending** | the BL's `xbl_config.elf` `/soc/memorymap/memory@A8000000` is `MemLabel = "Kernel"`, `reg = <0xa8000000 0x10000000>`; `UEFI_RESV` ends at its base, the map's `NOMAP` region ends at the live `memstart`, and it collides with no DT carve-out (`evidence/xbl-memorymap.md`). Not yet read from a running boot. |
+| `P0_KERNEL_PHYS_LOAD = 0xa8000000` | **declared, pending** | the BL's `xbl_config.elf` `/soc/memorymap/memory@A8000000` is `MemLabel = "Kernel"`, `reg = <0xa8000000 0x10000000>`; the BL's `uefi.elf` carries the driver that looks up that entry and writes `KernelBaseAddr`/`KernelSize` from it; `UEFI_RESV` ends at the region base, the map's `NOMAP` region ends at the live `memstart`, and it collides with no DT carve-out (`evidence/xbl-memorymap.md`). Not yet read from a running boot. |
 
 `P0_PHYS_OFFSET` is `memstart_addr`, not a DRAM base. The value matches the
 reference profile exactly, which is expected on the same platform binary, and it
@@ -191,12 +191,16 @@ clear of every Linux-side carve-out.  The same map's `NOMAP` region ends at
 cross-checks against the live kernel, the UEFI image and the DTBO.
 
 This is stronger than free space, but it is still not a runtime measurement.
-LinuxLoader reads `KernelBaseAddr` and `KernelSize` from Samsung UEFI variables
+The same BL member's `uefi.elf` carries the driver that publishes the entry:
+it looks up the platform-config entry named `Kernel` (the map's `MemLabel`),
+then calls `SetVariable` for `KernelBaseAddr` and `KernelSize` with that
+entry's `MemBase` and `MemSize` under GUID
+882f8c2b-9646-435f-8de5-f208ff80c1bd.  LinuxLoader reads those variables back
 and adds the Image's `text_offset` (0 here), or 0x8000 / 0x80000 when the arm64
-header is not recognised; the shell cannot read those variables, and the
-LinuxLoader boot path materialises no such constant.  The value is
-therefore boot-chain authored and agrees with the validated sibling profile,
-but the row stays pending until a running boot confirms it.
+header is not recognised.  `evidence/xbl-memorymap.md` records the driver, the
+calls, and the gzip-nested firmware volume they live in.  The shell still
+cannot read the variables, so the value is boot-chain authored end to end but
+unmeasured; the row stays pending until a running boot confirms it.
 
 What the shipped DT says is recorded in `evidence/dtbo-reserved.md`. The
 base DT in `vendor_boot.img` lists 88 reserved-memory carve-outs across 22 board
@@ -208,7 +212,7 @@ Rows still open after that:
 
 | Value | How it is closed |
 | --- | --- |
-| `P0_KERNEL_PHYS_LOAD` | confirm on a running boot: root-side `/proc/iomem`, or the physical P0 oracle, which is the exploit's first step and fails before any kernel write; the BL declares the region base `0xa8000000` |
+| `P0_KERNEL_PHYS_LOAD` | confirm on a running boot: root-side `/proc/iomem`, or the physical P0 oracle, which is the exploit's first step and fails before any kernel write; the BL declares the region base `0xa8000000` and writes it into `KernelBaseAddr` |
 | lane/bank geometry (`SLIDE_BANK_SLOTS`, `SLIDE_S928_BANK_*`) | on-device: re-check against the reclaimed page layout |
 | live reclaim and FOPS readback | on-device, after a build exists |
 

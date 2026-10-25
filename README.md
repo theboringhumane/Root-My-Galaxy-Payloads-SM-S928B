@@ -10,9 +10,10 @@ method and tooling used to derive it from the validated `SM-S928N`
 >
 > The profile's symbol offsets, struct offsets and P0 fingerprint are derived
 > from the exact `S928BXXU6EZIF` kernel Image. One value — the physical load
-> address — is declared by the shipped bootloader's memory map but has not been
-> read from a running boot, so `target.h` contains an `#error` that refuses to
-> compile. Do not remove it to "see what happens": a kernel exploit with the
+> address — is declared by the shipped bootloader's memory map and carried into
+> the `KernelBaseAddr` variable by a driver in the same package, but has not
+> been read from a running boot, so `target.h` contains an `#error` that refuses
+> to compile. Do not remove it to "see what happens": a kernel exploit with the
 > wrong physical anchor writes to a real address that is not the symbol, and the
 > usual result is a panic.
 >
@@ -52,7 +53,7 @@ enough to break the slide leak.
 | `SLIDE_PSELECT_WORD_SHIFT = 3` | derived from the Image's futex/pselect frames |
 | struct layout (`task_struct`, waiter, fops, page, workqueue, …) | confirmed against the Image's BTF |
 | `p0_fingerprint.h` | generated from the Image at probe `0x1f0000`; regeneration byte-identical |
-| `P0_KERNEL_PHYS_LOAD` | declared `0xa8000000` by the BL's XBL memory map (`Kernel` region); not yet read from a running boot |
+| `P0_KERNEL_PHYS_LOAD` | declared `0xa8000000` by the BL's XBL memory map (`Kernel` region) and written into `KernelBaseAddr`; not yet read from a running boot |
 | Payload build | blocked: no NDK on the build host, and the gate is closed |
 | KernelSU daemon | not started |
 
@@ -112,8 +113,9 @@ What remains:
 
 1. confirm `P0_KERNEL_PHYS_LOAD` on a running boot (root-side `/proc/iomem`, or
    the physical P0 oracle); the BL memory map names the `Kernel` region at
-   `0xa8000000` ([`evidence/xbl-memorymap.md`](evidence/xbl-memorymap.md)) and
-   it is clear of every reserved-memory carve-out
+   `0xa8000000` ([`evidence/xbl-memorymap.md`](evidence/xbl-memorymap.md)), the
+   package's UEFI driver publishes it as `KernelBaseAddr`, and it is clear of
+   every reserved-memory carve-out
    ([`evidence/dtbo-reserved.md`](evidence/dtbo-reserved.md));
 2. build the payload with an NDK, which the current host does not have;
 3. validate on the handset incrementally: reclaim, physical oracle, waiter
