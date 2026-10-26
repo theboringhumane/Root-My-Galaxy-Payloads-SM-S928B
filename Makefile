@@ -117,13 +117,14 @@ $(APP_RELEASE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h s
 	truncate -s $(APP_RELEASE_SIZE) $@
 
 $(APP_STABLE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h src/kernelsnitch/*.h | $(OUTDIR)
-	$(TARGET_CC) -DAPP_PAYLOAD=1 -DAPP_S928_STABLE_RACE=1 \
+	$(TARGET_CC) -DAPP_PAYLOAD=1 -DAPP_S928_STABLE_RACE=1 $(APP_TARGET_CFLAGS) \
 	  -fPIC -Oz -g0 -fvisibility=hidden -fno-semantic-interposition \
 	  -fstack-protector-strong \
 	  -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	  -ffunction-sections -fdata-sections \
 	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \
 	  -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"' \
+	  $(TARGET_CFLAGS) \
 	  $(APP_PRELOAD_SRCS) -shared -pthread \
 	  -Wl,--gc-sections -Wl,--icf=all -s -o $@
 	@test $$(wc -c < $@) -le $(APP_RELEASE_SIZE)
