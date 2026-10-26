@@ -88,5 +88,27 @@ The shell user is in group 3012(readtracefs), so the raw ring buffer is readable
 without root. There is no global trace_pipe_raw on this kernel; reads must go
 through per_cpu/cpuN/.
 
+Pipe buffer budget
+------------------
+
+The reclaim stage sizes its pipes with `F_SETPIPE_SZ`, which is refused with
+`EPERM` once the calling uid is over its per-uid pipe-page budget. For uid 2000
+on a clean boot the largest accepted size lands between 16,352 and 16,368 pages,
+measured by walking `F_SETPIPE_SZ` upward over one pipe from a shell-uid probe.
+The route needs 240 drain plus 240 reclaim pipes at 32 slots, so 15,360 pages: it
+fits, with about six percent to spare.
+
+`EPERM` there is therefore not a firmware cap. The failure seen on the reference
+handset came from a `cve43499-p0ref` reference keeper left behind by an earlier
+run: it was days old, had 960 open pipe fds (about 8,160 pages) and kept them
+because it was spawned on the retention path, which holds every reclaim and
+gate-holder fd alive. Half the budget was already spent before the next run
+began. Look for it with
+
+  $ ps -A -o PID,NAME | grep cve43499
+  $ ls /proc/<pid>/fd | wc -l
+
+and kill the stale keeper before reading anything into the `EPERM`.
+
 Not recorded here: device serial, adb transport, boot_id, and the KASLR slide of
 any particular boot.
