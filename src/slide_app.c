@@ -693,6 +693,7 @@ static useconds_t slide_enter_delay_usec(void) {
 #endif
 }
 
+#if !(defined(APP_S928_STABLE_RACE) && APP_S928_STABLE_RACE)
 static void slide_wait_before_consume(int sequence) {
   if (sequence == 1) {
     useconds_t delay = slide_enter_delay_usec();
@@ -701,6 +702,7 @@ static void slide_wait_before_consume(int sequence) {
     }
   }
 }
+#endif
 
 static uint64_t slide_select_route_fine_delay_ticks(void) {
 #if defined(APP_FOPS_ROUTE_FINE_DELAY_TICKS)
