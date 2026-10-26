@@ -217,6 +217,34 @@ Rows still open after that:
 | lane/bank geometry (`SLIDE_BANK_SLOTS`, `SLIDE_S928_BANK_*`) | on-device: re-check against the reclaimed page layout |
 | live reclaim and FOPS readback | on-device, after a build exists |
 
+### The route result gate
+
+Every race this build ran reported `triggered=0`, and the run stopped there:
+`main.c` computes `verified = triggered && try_cfi_stage()`, so the FOPS readback
+never executed and the log's `read_ok=0 write_ok=0` measured the absence of a
+check, not the absence of a write.
+
+Two gates caused that, both inherited:
+
+| Signal | Published by | Reachable by the pselect writer |
+| --- | --- | --- |
+| `slide_pselect_write_window` | nowhere — every reference reads it, the only store is the reset to 0 | no |
+| `slide_stack_write_window` | `ret > 0 && slide_consume_sched_ok` | no: the watched fds are `dup2`s of a timerfd that is created but never armed, so pselect6 always returns 0 at its timeout |
+
+The live signals are `slide_waiter_ok` (the `FUTEX_CMP_REQUEUE_PI` deadlock was
+accepted and the waiter route finished) and `slide_consume_sched_ok` (the
+consumer's sched call ran while the pselect frame was live, which is what
+carries the fd-set words onto the stale waiter). The route now returns
+`waiter_ok && consume_sched_ok` under `APP_EZIF_VERIFY_PSELECT_TIMEOUT`, which is
+the same shape the engine already uses for `APP_ACCEPT_SCHED_TRIGGER`, and the
+readback decides.
+
+The consequence of the old gate is also the explanation for the reboots seen
+before this change: a rewrite that landed was reported as a miss, the payload
+exited, and the next `/dev/ashmem` open in any process followed `misc_fops` into
+the reclaimed page after that page was freed. `stack writer ran; refusing retry
+on this boot` ended the run without ever restoring the pointer.
+
 ## Verification commands
 
 ```sh
@@ -270,16 +298,28 @@ The target builds only when all of these are true:
    `tools/layout_check.c`); the address itself is unmeasured;
 5. struct offsets keep every fake object inside its page — **passes** (BTF sizes
    above, asserted in `tools/layout_check.c`);
-6. release payload is exactly 104128 bytes — **not reached**, needs a build.
+6. release payload is exactly 104128 bytes — **passes**, the stable recipe
+   truncates to 104128 and asserts the size before doing so.
 
 ## Build
 
 ```sh
-make TARGET=e3q-S928BXXU6EZIF ANDROID_NDK_HOME=/path/to/ndk release
+make stable TARGET=e3q-S928BXXU6EZIF \
+  ANDROID_NDK_HOME=/path/to/android-ndk-r27c \
+  TARGET_CFLAGS=-DALLOW_UNVERIFIED_S928B
 ```
 
-`ANDROID_NDK_HOME` is currently the blocker on the host used for this work; no
-NDK is installed, so no artifact exists.
+`-DALLOW_UNVERIFIED_S928B` is required while `P0_KERNEL_PHYS_LOAD` stays in the
+ledger as declared-but-unmeasured; it acknowledges the row rather than closing
+it.
+
+The payload carried by the handset build under test:
+
+```text
+build/e3q-S928BXXU6EZIF/cve-2026-43499-app.stable.so
+size 104128
+sha256 b507ad7d94a8f438ba06230374fb170c6c9f22ec52a79eb2d4d0d9295b67eeb1
+```
 
 ## KernelSU
 
@@ -298,17 +338,23 @@ signing-block parser changed between releases.
 
 ## Not done
 
-- no payload built, loaded or executed; no root attempted;
-- no `support/targets-v3.json` entry, because that feed entry requires a built,
-  hashed artifact;
-- no on-device validation of the pselect/FOPS route on this build.
+- no root yet: the payload has been built, installed and executed on the
+  reference handset, and every attempt so far ended at the gate described above;
+- no `support/targets-v3.json` entry, because that feed entry requires an
+  artifact validated on-device;
+- no on-device confirmation that a landed rewrite survives the readback, which
+  is what the gate change makes measurable.
 
 ## Next step
 
-Confirm `P0_KERNEL_PHYS_LOAD` on a running boot. The BL memory map names the
-Kernel region at `0xa8000000`, so a build made with
-`ALLOW_UNVERIFIED_S928B` still starts with the physical P0 oracle: it either
-recovers the slide or recovers nothing, before any kernel write. Then validate
-incrementally: reclaim, oracle, waiter rewrite, FOPS readback,
-`selinux_enforcing`. Each value change lands with the Image size and SHA-256
-that produced it.
+Re-run the race with the gate above removed from the reporting path. Until that
+run prints `triggered=1`, every `route result=0` in the log is this profile's
+answer to a question the code could not ask, and no delay, bucket or reclaim
+tuning is measurable.
+
+Then, and only then, the delay sweep becomes meaningful: the attempt table in
+`ezif_layout.h` walks outward from the 50 ms the reference device used, but
+`writer_started` still ends the supervisor run after the first attempt that
+reaches the stack writer, so one boot buys one race. `P0_KERNEL_PHYS_LOAD` stays
+open until a running boot confirms it; the physical P0 oracle is the first step
+that would confirm it and it runs before any kernel write.

